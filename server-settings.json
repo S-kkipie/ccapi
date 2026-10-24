@@ -1,0 +1,4 @@
+{
+  "permissions": { "allow": ["mcp__ccapi"] },
+  "env": { "CLAUDE_CODE_PLUGIN_DIRS": "" }
+}

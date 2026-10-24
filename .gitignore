@@ -1,0 +1,3 @@
+node_modules/
+plugins/*/.claude-plugin/types/
+.DS_Store

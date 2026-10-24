@@ -1,0 +1,18 @@
+{
+  "name": "ccapi",
+  "owner": {
+    "name": "ccapi"
+  },
+  "plugins": [
+    {
+      "name": "ccapi",
+      "source": "./plugins/ccapi",
+      "description": "Local Anthropic-compatible Messages API backed by Claude Code subagents (core)"
+    },
+    {
+      "name": "ccapi-spawn",
+      "source": "./plugins/ccapi-spawn",
+      "description": "Spawner half of ccapi (must be installed with ccapi)"
+    }
+  ]
+}

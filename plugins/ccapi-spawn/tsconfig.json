@@ -1,0 +1,5 @@
+{
+  "extends": "./.claude-plugin/types/tsconfig.json",
+  "compilerOptions": { "allowImportingTsExtensions": true, "erasableSyntaxOnly": true, "noEmit": true },
+  "include": [".claude-plugin/types", "hooks"]
+}

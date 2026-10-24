@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+# ccapi: run the Claude Code session that backs the local Anthropic-compatible API.
+set -euo pipefail
+
+REPO="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+CONF="${XDG_CONFIG_HOME:-$HOME/.config}/ccapi"
+SERVER_DIR="${CCAPI_SERVER_DIR:-$HOME/.ccapi/server}"
+PORT="${CCAPI_PORT:-18787}"
+SESSION=ccapi
+
+random_hex() { head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n'; }
+
+token() {
+  mkdir -p "$CONF"
+  chmod 700 "$CONF"
+  if [ ! -s "$CONF/token" ]; then (umask 077 && random_hex > "$CONF/token"); fi
+  cat "$CONF/token"
+}
+
+case "${1:-}" in
+  start)
+    command -v tmux >/dev/null || { echo "ccapi: tmux is required" >&2; exit 1; }
+    command -v bun >/dev/null || { echo "ccapi: bun is required" >&2; exit 1; }
+    if tmux has-session -t "$SESSION" 2>/dev/null; then echo "ccapi: already running (ccapi attach)"; exit 0; fi
+    mkdir -p "$SERVER_DIR"
+    # The tokens go through a 0600 env file: on the tmux command line any local user could read them with ps.
+    ENV_FILE="$CONF/session.env"
+    API_TOKEN="$(token)"
+    (
+      umask 077
+      {
+        printf 'CCAPI_SERVER=1\n'
+        printf 'CCAPI_PORT=%q\n' "$PORT"
+        printf 'CCAPI_TOKEN=%q\n' "$API_TOKEN"
+        printf 'CCAPI_INTERNAL_TOKEN=%q\n' "$(random_hex)"
+        printf 'CCAPI_BRIDGE=%q\n' "$REPO/plugins/ccapi/bridge/main.ts"
+        printf 'CCAPI_BUN=%q\n' "$(command -v bun)"
+      } > "$ENV_FILE"
+    )
+    tmux new-session -d -s "$SESSION" -c "$SERVER_DIR" \
+      bash -c 'set -a; . "$1"; set +a; exec claude --plugin-dir "$2/plugins/ccapi" --plugin-dir "$2/plugins/ccapi-spawn" --settings "$2/server-settings.json"' \
+      ccapi "$ENV_FILE" "$REPO"
+    echo "ccapi: starting on http://127.0.0.1:$PORT"
+    echo "ccapi: first run? 'ccapi attach' to accept the folder trust prompt, then detach with ctrl-b d"
+    ;;
+  run)
+    # For a service manager: start, then stay up while the session lives, so a crash restarts it.
+    "$REPO/bin/ccapi" start
+    while tmux has-session -t "$SESSION" 2>/dev/null; do sleep 15; done
+    echo "ccapi: session ended" >&2
+    exit 1
+    ;;
+  install-service)
+    # A systemd user unit that keeps ccapi up across crashes and reboots (needs linger for reboots).
+    UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
+    mkdir -p "$UNIT_DIR"
+    cat > "$UNIT_DIR/ccapi.service" <<EOF
+[Unit]
+Description=ccapi (Claude Code as a local Anthropic API)
+After=network-online.target
+
+[Service]
+Type=simple
+Environment=PATH=$PATH
+ExecStart=$REPO/bin/ccapi run
+ExecStop=$REPO/bin/ccapi stop
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target
+EOF
+    systemctl --user daemon-reload
+    systemctl --user enable ccapi.service
+    echo "ccapi: installed $UNIT_DIR/ccapi.service (systemctl --user start ccapi)"
+    ;;
+  stop)
+    if tmux kill-session -t "$SESSION" 2>/dev/null; then echo "ccapi: stopped"; else echo "ccapi: not running"; fi
+    ;;
+  status)
+    curl -fsS "http://127.0.0.1:$PORT/health" && echo || { echo "ccapi: bridge not answering on $PORT" >&2; exit 1; }
+    ;;
+  token)
+    token
+    echo
+    ;;
+  attach)
+    exec tmux attach -t "$SESSION"
+    ;;
+  *)
+    echo "usage: ccapi start|stop|status|token|attach|run|install-service" >&2
+    exit 2
+    ;;
+esac

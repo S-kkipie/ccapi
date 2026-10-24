@@ -1,0 +1,51 @@
+{
+  "name": "ccapi",
+  "version": "0.1.0",
+  "description": "Local Anthropic-compatible Messages API backed by Claude Code subagents (core: bridge, tools, hooks)",
+  "author": {
+    "name": "ccapi contributors"
+  },
+  "userConfig": {
+    "max_concurrent": {
+      "type": "number",
+      "title": "Max concurrent subagents",
+      "description": "Subagents running at once; extra requests wait in the queue",
+      "default": 4,
+      "min": 1,
+      "max": 32
+    },
+    "queue_size": {
+      "type": "number",
+      "title": "Queue size",
+      "description": "Requests that may wait for a free slot before ccapi answers 429",
+      "default": 16,
+      "min": 0,
+      "max": 1000
+    },
+    "tool_wait_minutes": {
+      "type": "number",
+      "title": "Tool wait (minutes)",
+      "description": "How long a tool call waits for the client's tool_result",
+      "default": 10,
+      "min": 1,
+      "max": 120
+    },
+    "expose_thinking": {
+      "type": "string",
+      "title": "Expose thinking",
+      "description": "When thinking blocks reach the client",
+      "options": [
+        "requested",
+        "always",
+        "never"
+      ],
+      "default": "requested"
+    },
+    "debug_bodies": {
+      "type": "boolean",
+      "title": "Log bodies",
+      "description": "Write request bodies to the request log",
+      "default": false
+    }
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "name": "ccapi-spawn",
+  "version": "0.1.0",
+  "description": "Spawner half of ccapi: starts the request subagents so the ccapi hooks can see them",
+  "author": {
+    "name": "ccapi contributors"
+  }
+}
