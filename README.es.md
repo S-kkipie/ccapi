@@ -14,6 +14,10 @@
   <img src="https://img.shields.io/badge/license-MIT-44403C" alt="Licencia MIT">
 </p>
 
+<p align="center">
+  <img src="assets/demo.gif" width="800" alt="demo de ccapi">
+</p>
+
 <p align="center"><a href="README.md">English</a> · Español</p>
 
 ---
