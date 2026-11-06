@@ -1,7 +1,7 @@
 import type { MessageResponse, SseEvent, StopReason } from '../src/api.ts'
 import type { AgentEvent } from '../src/wire.ts'
 import { type AssemblerOptions, MessageAssembler } from '../src/assembler.ts'
-import { type ApiError, errorBody, upstreamError } from '../src/errors.ts'
+import { type ApiError, errorBody, type PlanWindow, upstreamError } from '../src/errors.ts'
 import { encodeSse } from '../src/sse.ts'
 
 const SSE_HEADERS = { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-cache', connection: 'keep-alive' }
@@ -20,6 +20,8 @@ export class ResponseSink {
   private ping: ReturnType<typeof setInterval> | undefined
   private started = false
   private ended = false
+  private failure: ApiError | undefined
+  private windows: PlanWindow[] | undefined
 
   constructor(opts: AssemblerOptions, stream: boolean, onEnd: (sink: ResponseSink) => void) {
     this.stream = stream
@@ -32,6 +34,16 @@ export class ResponseSink {
 
   get isEnded(): boolean {
     return this.ended
+  }
+
+  // Why this response failed, when it did.
+  get error(): ApiError | undefined {
+    return this.failure
+  }
+
+  // The plan's usage windows as the subagent's last turn reported them.
+  get limits(): PlanWindow[] | undefined {
+    return this.windows
   }
 
   get stopReason(): StopReason | null {
@@ -48,8 +60,9 @@ export class ResponseSink {
 
   feed(ev: AgentEvent): void {
     if (this.ended) return
+    if (ev.kind === 'turn-end' && ev.limits) this.windows = ev.limits
     if (ev.kind === 'turn-end' && (ev.reason === 'error' || ev.reason === 'aborted')) {
-      this.fail(upstreamError(ev.reason))
+      this.fail(upstreamError(ev.reason, ev.limits))
       return
     }
     this.ensureStarted()
@@ -78,10 +91,12 @@ export class ResponseSink {
 
   fail(err: ApiError): void {
     if (this.ended) return
+    this.failure = err
     if (!this.started || !this.stream) {
       this.ended = true
       this.stopPing()
-      this.resolve(Response.json(errorBody(err), { status: err.status }))
+      const headers = err.retryAfterSeconds !== undefined ? { 'retry-after': String(err.retryAfterSeconds) } : undefined
+      this.resolve(Response.json(errorBody(err), { status: err.status, ...(headers ? { headers } : {}) }))
       this.onEnd(this)
       return
     }

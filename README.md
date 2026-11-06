@@ -157,17 +157,22 @@ The spawner is a separate mod because a mod can't observe the subagents it spawn
 | `expose_thinking` | `requested` | When thinking blocks reach you: `requested`, `always`, `never` |
 | `debug_bodies` | false | Write request bodies to the request log |
 
-Each option is a row in `/config` inside the ccapi session (`ccapi attach`). `CCAPI_PORT` changes the port (default `18787`) and `CCAPI_SERVER_DIR` the session's folder (default `~/.ccapi/server`). Requests are logged to `~/.local/state/ccapi/requests.jsonl`.
+Each option is a row in `/config` inside the ccapi session (`ccapi attach`). `CCAPI_PORT` changes the port (default `18787`) and `CCAPI_SERVER_DIR` the session's folder (default `~/.ccapi/server`). Requests are logged to `~/.local/state/ccapi/requests.jsonl`, each with the client (key name), usage, and the error when one failed.
 
 | Command | |
 | --- | --- |
 | `ccapi start` / `stop` | Start or stop the tmux session |
 | `ccapi status` | Health of the API |
 | `ccapi token` | Print the local API key (stored in `~/.config/ccapi/token`, mode 0600) |
+| `ccapi key add <name>` / `list` / `revoke <name>` | Extra API keys, one per client (`~/.config/ccapi/keys`, mode 0600). Logged under their name; adding or revoking needs no restart |
+| `ccapi usage [days] [--plan]` | Requests, failures, tokens and cache hit rate per client, model and day; `--plan` also reads the plan's usage windows (one tiny Haiku turn) |
 | `ccapi attach` | Open the session (detach with Ctrl-b d) |
 | `ccapi install-service` | Install the systemd user unit |
 
 ## Good to know
+
+- **It is a model, not a shell.** Each request agent may call only the tools that request sent, and `server-settings.json` also denies Claude Code's own tools (Bash, files, web) and turns off installed plugins in the ccapi session, so a request cannot run anything on the machine. Keep it that way before you put it in front of anyone.
+- **Structured outputs are not supported.** `output_config.format` is answered with plain text. Ask for JSON through a tool instead (with the Vercel AI SDK, `structuredOutputMode: "jsonTool"`).
 
 - The system prompt always starts with "You are a Claude agent, built on Anthropic's Claude Agent SDK." Claude Code adds it to every subagent and it can't be removed.
 - Every request spends your plan's usage, like any Claude Code session.

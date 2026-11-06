@@ -157,17 +157,22 @@ El que lanza los subagentes es un mod aparte porque un mod no puede observar los
 | `expose_thinking` | `requested` | Cuándo te llegan los bloques de thinking: `requested`, `always`, `never` |
 | `debug_bodies` | false | Guarda el cuerpo de los requests en el log |
 
-Cada opción es una fila en `/config` dentro de la sesión de ccapi (`ccapi attach`). `CCAPI_PORT` cambia el puerto (por defecto `18787`) y `CCAPI_SERVER_DIR` la carpeta de la sesión (por defecto `~/.ccapi/server`). Los requests se registran en `~/.local/state/ccapi/requests.jsonl`.
+Cada opción es una fila en `/config` dentro de la sesión de ccapi (`ccapi attach`). `CCAPI_PORT` cambia el puerto (por defecto `18787`) y `CCAPI_SERVER_DIR` la carpeta de la sesión (por defecto `~/.ccapi/server`). Los requests se registran en `~/.local/state/ccapi/requests.jsonl`, cada uno con el cliente (nombre de la key), el uso y el error si falló.
 
 | Comando | |
 | --- | --- |
 | `ccapi start` / `stop` | Arranca o detiene la sesión de tmux |
 | `ccapi status` | Salud de la API |
 | `ccapi token` | Muestra la API key local (guardada en `~/.config/ccapi/token`, modo 0600) |
+| `ccapi key add <nombre>` / `list` / `revoke <nombre>` | API keys extra, una por cliente (`~/.config/ccapi/keys`, modo 0600). Se registran con su nombre; crear o revocar no necesita reinicio |
+| `ccapi usage [días] [--plan]` | Requests, fallos, tokens y tasa de caché por cliente, modelo y día; `--plan` además lee las ventanas de uso del plan (un turno mínimo de Haiku) |
 | `ccapi attach` | Abre la sesión (sal con Ctrl-b d) |
 | `ccapi install-service` | Instala la unidad systemd de usuario |
 
 ## Para tener en cuenta
+
+- **Es un modelo, no una shell.** Cada agente de request solo puede llamar las tools que ese request mandó, y además `server-settings.json` niega las tools propias de Claude Code (Bash, archivos, web) y apaga los plugins instalados en la sesión de ccapi, así que un request no puede ejecutar nada en la máquina. Mantenlo así antes de ponerlo frente a cualquiera.
+- **No soporta salidas estructuradas.** A `output_config.format` le responde con texto plano. Pide el JSON con una tool (en el Vercel AI SDK, `structuredOutputMode: "jsonTool"`).
 
 - El system prompt siempre empieza con "You are a Claude agent, built on Anthropic's Claude Agent SDK.". Claude Code lo agrega a cada subagente y no se puede quitar.
 - Cada request gasta el uso de tu plan, como cualquier sesión de Claude Code.

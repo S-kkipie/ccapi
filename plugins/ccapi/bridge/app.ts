@@ -1,3 +1,4 @@
+import { timingSafeEqual } from 'node:crypto'
 import type { MessagesRequest } from '../src/api.ts'
 import type { AgentEvent, RegisteredReport, RequestJob, SpawnedReport, SpawnJob, ToolToRegister } from '../src/wire.ts'
 import { ATTACHMENTS_ADDENDUM, buildAgentPlan, effortOf, toolChoiceAddendum } from '../src/agent-spec.ts'
@@ -16,6 +17,8 @@ import { ResponseSink } from './sink.ts'
 
 export type BridgeConfig = {
   token: string
+  // More API keys beside `token`, key to client name; read on every request, so a revoked key stops at once.
+  keys?: () => ReadonlyMap<string, string>
   internalToken: string
   maxConcurrent: number
   queueSize: number
@@ -49,8 +52,13 @@ export const createBridge = (cfg: BridgeConfig) => {
   const buffered = new Map<string, { at: number; events: AgentEvent[] }>()
   let total = 0
 
-  const fail = (err: ApiError) =>
-    Response.json(errorBody(err), { status: err.status, ...(err.status === 429 ? { headers: { 'retry-after': '5' } } : {}) })
+  const fail = (err: ApiError) => {
+    const retryAfter = err.retryAfterSeconds ?? (err.status === 429 ? 5 : undefined)
+    return Response.json(errorBody(err), {
+      status: err.status,
+      ...(retryAfter !== undefined ? { headers: { 'retry-after': String(retryAfter) } } : {}),
+    })
+  }
 
   const readJson = async (req: Request): Promise<unknown> => {
     try {
@@ -60,14 +68,31 @@ export const createBridge = (cfg: BridgeConfig) => {
     }
   }
 
-  const authorized = (req: Request): boolean => {
+  const sameKey = (a: string, b: string): boolean => {
+    const x = Buffer.from(a)
+    const y = Buffer.from(b)
+    return x.length === y.length && timingSafeEqual(x, y)
+  }
+
+  // The client a request's key belongs to: `local` for the main token, a named key's name, or undefined.
+  // Every key is compared, in constant time, so the answer's timing says nothing about which one is close.
+  const clientOf = (req: Request): string | undefined => {
     const key = req.headers.get('x-api-key') ?? req.headers.get('authorization')?.replace(/^Bearer\s+/i, '')
-    return key === cfg.token
+    if (!key) return undefined
+    let client = sameKey(key, cfg.token) ? 'local' : undefined
+    for (const [k, name] of cfg.keys?.() ?? []) if (sameKey(key, k) && client === undefined) client = name
+    return client
   }
 
   const health = (): Health => ({ ok: true, ...limiter.stats(), conversations: store.size, parked: store.parkedCount, total })
 
-  const newSink = (req: MessagesRequest, convId: string, toolNames: Record<string, string>, route: 'fresh' | 'continue') => {
+  const newSink = (
+    req: MessagesRequest,
+    convId: string,
+    toolNames: Record<string, string>,
+    route: 'fresh' | 'continue',
+    client: string,
+  ) => {
     const startedAt = Date.now()
     return new ResponseSink(
       {
@@ -85,7 +110,10 @@ export const createBridge = (cfg: BridgeConfig) => {
       req.stream === true,
       sink => {
         const message = sink.message()
+        const error = sink.error
+        const limits = sink.limits
         cfg.log({
+          client,
           convId,
           route,
           model: req.model,
@@ -93,6 +121,8 @@ export const createBridge = (cfg: BridgeConfig) => {
           ms: Date.now() - startedAt,
           stopReason: message.stop_reason,
           usage: message.usage,
+          ...(error ? { error: { status: error.status, type: error.type, message: error.message } } : {}),
+          ...(limits ? { limits } : {}),
           ...(cfg.debugBodies ? { request: req } : {}),
         })
       },
@@ -133,7 +163,7 @@ export const createBridge = (cfg: BridgeConfig) => {
     else signal.addEventListener('abort', onAbort, { once: true })
   }
 
-  const startConversation = async (req: MessagesRequest, signal: AbortSignal): Promise<Response> => {
+  const startConversation = async (req: MessagesRequest, signal: AbortSignal, client: string): Promise<Response> => {
     const model = resolveModel(req.model)
     const release = await takeSlot(signal)
     try {
@@ -173,7 +203,7 @@ export const createBridge = (cfg: BridgeConfig) => {
         ...(effort !== undefined ? { effort } : {}),
       })
       const fallback = familyAlias(model)
-      const sink = newSink(req, convId, toolNames, 'fresh')
+      const sink = newSink(req, convId, toolNames, 'fresh', client)
       const conv: Conversation = {
         convId,
         model,
@@ -206,16 +236,17 @@ export const createBridge = (cfg: BridgeConfig) => {
     req: MessagesRequest,
     route: Extract<Route, { kind: 'continue' }>,
     signal: AbortSignal,
+    client: string,
   ): Promise<Response> => {
     const release = await takeSlot(signal)
     const conv = store.get(route.convId)
     // It may have expired or been evicted while this request waited for a slot.
     if (!conv) {
       release()
-      return startConversation(req, signal)
+      return startConversation(req, signal, client)
     }
     conv.release = release
-    const sink = newSink(req, conv.convId, conv.toolNames, 'continue')
+    const sink = newSink(req, conv.convId, conv.toolNames, 'continue', client)
     conv.sink = sink
     conv.detached = false
     bindAbort(signal, conv, sink)
@@ -339,11 +370,13 @@ export const createBridge = (cfg: BridgeConfig) => {
     }
   }
 
-  const messages = async (req: Request): Promise<Response> => {
+  const messages = async (req: Request, client: string): Promise<Response> => {
     const body = parseMessagesRequest(await readJson(req))
     total++
     const route = routeRequest(body, ids => store.findParked(ids))
-    return route.kind === 'continue' ? continueConversation(body, route, req.signal) : startConversation(body, req.signal)
+    return route.kind === 'continue'
+      ? continueConversation(body, route, req.signal, client)
+      : startConversation(body, req.signal, client)
   }
 
   const fetch = async (req: Request): Promise<Response> => {
@@ -353,7 +386,8 @@ export const createBridge = (cfg: BridgeConfig) => {
     try {
       if (url.pathname.startsWith('/internal/')) return await internalRoute(req, url)
       if (req.method === 'GET' && path === '/health') return Response.json(health())
-      if (!authorized(req)) throw new ApiError(401, 'authentication_error', 'invalid x-api-key')
+      const client = clientOf(req)
+      if (client === undefined) throw new ApiError(401, 'authentication_error', 'invalid x-api-key')
       if (req.method === 'GET' && path === '/models')
         return Response.json({
           data: MODELS.map(m => ({ type: 'model', id: m.id, display_name: m.display_name, created_at: '2025-01-01T00:00:00Z' })),
@@ -367,7 +401,7 @@ export const createBridge = (cfg: BridgeConfig) => {
           throw new ApiError(400, 'invalid_request_error', 'messages: required array')
         return Response.json({ input_tokens: estimateRequestTokens(body as { messages: unknown }) })
       }
-      if (req.method === 'POST' && path === '/messages') return await messages(req)
+      if (req.method === 'POST' && path === '/messages') return await messages(req, client)
       throw new ApiError(404, 'not_found_error', `no route ${req.method} ${url.pathname}`)
     } catch (err) {
       return fail(toApiError(err))

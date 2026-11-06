@@ -1,4 +1,8 @@
 {
-  "permissions": { "allow": ["mcp__ccapi"] },
+  "permissions": {
+    "allow": ["mcp__ccapi"],
+    "deny": ["Bash", "Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "Glob", "Grep", "WebFetch", "WebSearch", "Skill", "mcp__composio"]
+  },
+  "enabledPlugins": { "composio@composio": false },
   "env": { "CLAUDE_CODE_PLUGIN_DIRS": "" }
 }

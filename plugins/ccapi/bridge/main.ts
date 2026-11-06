@@ -1,3 +1,4 @@
+import { readFileSync, statSync } from 'node:fs'
 import { appendFile, mkdir } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { createBridge } from './app.ts'
@@ -17,10 +18,35 @@ if (exposeThinking !== 'requested' && exposeThinking !== 'always' && exposeThink
 }
 
 const logPath = env('CCAPI_LOG', `${process.env.HOME}/.local/state/ccapi/requests.jsonl`)
+
+// Extra API keys, one `<name> <key>` a line (`ccapi key add`). Re-read whenever the file changes, so
+// adding or revoking a key needs no restart. Keys shorter than 32 characters are ignored.
+const keysPath = env('CCAPI_KEYS_FILE', `${process.env.HOME}/.config/ccapi/keys`)
+let keysCache = { mtimeMs: -1, keys: new Map<string, string>() }
+const keys = (): ReadonlyMap<string, string> => {
+  let mtimeMs: number
+  try {
+    mtimeMs = statSync(keysPath).mtimeMs
+  } catch {
+    keysCache = { mtimeMs: 0, keys: new Map() }
+    return keysCache.keys
+  }
+  if (mtimeMs !== keysCache.mtimeMs) {
+    const parsed = new Map<string, string>()
+    for (const line of readFileSync(keysPath, 'utf8').split('\n')) {
+      const [name, key] = line.trim().split(/\s+/)
+      if (!name || !key || name.startsWith('#') || key.length < 32) continue
+      parsed.set(key, name)
+    }
+    keysCache = { mtimeMs, keys: parsed }
+  }
+  return keysCache.keys
+}
 await mkdir(dirname(logPath), { recursive: true })
 
 const bridge = createBridge({
   token,
+  keys,
   internalToken,
   maxConcurrent: Number(env('CCAPI_MAX_CONCURRENT', '4')),
   queueSize: Number(env('CCAPI_QUEUE_SIZE', '16')),

@@ -87,8 +87,43 @@ EOF
   attach)
     exec tmux attach -t "$SESSION"
     ;;
+  key)
+    # Extra API keys, one "<name> <key>" a line. The bridge re-reads the file when it changes,
+    # so a new key works and a revoked one stops without a restart.
+    KEYS="$CONF/keys"
+    mkdir -p "$CONF" && chmod 700 "$CONF"
+    (umask 077 && touch "$KEYS")
+    NAME="${3:-}"
+    case "${2:-}" in
+      add)
+        [[ "$NAME" =~ ^[A-Za-z0-9_-]+$ ]] || { echo "usage: ccapi key add <name>   (letters, digits, - and _)" >&2; exit 2; }
+        if awk -v n="$NAME" '$1 == n { found = 1 } END { exit !found }' "$KEYS"; then
+          echo "ccapi: a key named $NAME already exists; revoke it first" >&2
+          exit 1
+        fi
+        KEY="sk-ccapi-$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+        printf '%s %s\n' "$NAME" "$KEY" >> "$KEYS"
+        echo "$KEY"
+        ;;
+      list)
+        awk '!/^#/ && NF == 2 { print $1 }' "$KEYS"
+        ;;
+      revoke)
+        [ -n "$NAME" ] || { echo "usage: ccapi key revoke <name>" >&2; exit 2; }
+        (umask 077 && awk -v n="$NAME" '$1 != n' "$KEYS" > "$KEYS.tmp") && mv "$KEYS.tmp" "$KEYS"
+        echo "ccapi: revoked $NAME"
+        ;;
+      *)
+        echo "usage: ccapi key add <name> | list | revoke <name>" >&2
+        exit 2
+        ;;
+    esac
+    ;;
+  usage)
+    exec "${CCAPI_BUN:-bun}" "$REPO/bin/usage.ts" "${@:2}"
+    ;;
   *)
-    echo "usage: ccapi start|stop|status|token|attach|run|install-service" >&2
+    echo "usage: ccapi start|stop|status|token|key|usage|attach|run|install-service" >&2
     exit 2
     ;;
 esac

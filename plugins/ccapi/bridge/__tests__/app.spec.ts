@@ -193,6 +193,45 @@ describe('bridge', () => {
     expect((await pending).status).toBe(529)
   })
 
+  test('an extra named key is accepted, logged by its name, and refused once revoked', async () => {
+    const entries: Record<string, unknown>[] = []
+    let keys = new Map([['pub-key', 'public']])
+    const { client, internal, admit } = setup({ keys: () => keys, log: e => entries.push(e) })
+    const pending = client(ask, 'pub-key')
+    await admit('ag20')
+    await internal('events', [
+      { kind: 'step-end', agentId: 'ag20', stopReason: 'end_turn', usage, toolUseIds: [], toolNames: [] },
+      { kind: 'turn-end', agentId: 'ag20', reason: 'answer' },
+    ])
+    expect((await pending).status).toBe(200)
+    expect(entries.at(-1)).toMatchObject({ client: 'public', stopReason: 'end_turn' })
+    keys = new Map()
+    expect((await client(ask, 'pub-key')).status).toBe(401)
+  })
+
+  test('the main token is logged as the local client', async () => {
+    const entries: Record<string, unknown>[] = []
+    const { client, internal, admit } = setup({ log: e => entries.push(e) })
+    const pending = client(ask)
+    await admit('ag21')
+    await internal('events', [{ kind: 'turn-end', agentId: 'ag21', reason: 'error' }])
+    await pending
+    expect(entries.at(-1)).toMatchObject({ client: 'local', error: { type: 'overloaded_error' } })
+  })
+
+  test('a failure while a plan window is used up is a 429, logged with the windows', async () => {
+    const entries: Record<string, unknown>[] = []
+    const { client, internal, admit } = setup({ log: e => entries.push(e) })
+    const pending = client(ask)
+    await admit('ag22')
+    const limits = [{ kind: 'seven_day', percentUsed: 100, resetsAt: '2099-01-01T00:00:00Z' }]
+    await internal('events', [{ kind: 'turn-end', agentId: 'ag22', reason: 'error', limits }])
+    const res = await pending
+    expect(res.status).toBe(429)
+    expect(Number(res.headers.get('retry-after'))).toBeGreaterThan(0)
+    expect(entries.at(-1)).toMatchObject({ error: { type: 'rate_limit_error' }, limits })
+  })
+
   test('the concurrency limit answers 429 with retry-after', async () => {
     const { client } = setup({ maxConcurrent: 1, queueSize: 0 })
     void client(ask)

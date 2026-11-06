@@ -217,7 +217,14 @@ export const register: Register = (on, options) => {
   })
 
   on('turn.complete', async ($, e, next) => {
-    if (rt && e.agentId) rt.sender.push({ kind: 'turn-end', agentId: e.agentId, reason: e.reason })
+    if (rt && e.agentId) {
+      // The plain usage call costs nothing; it is how a failed turn can be told apart from a used-up plan.
+      const limits = await $.session
+        .usage()
+        .then(u => u.rateLimits.map(w => ({ kind: w.kind, percentUsed: w.percentUsed, resetsAt: w.resetsAt ?? '' })))
+        .catch(() => [])
+      rt.sender.push({ kind: 'turn-end', agentId: e.agentId, reason: e.reason, ...(limits.length > 0 ? { limits } : {}) })
+    }
     return next(e)
   })
 

@@ -1,5 +1,6 @@
 // Protocol between the bridge and the two mods (JSON over the bridge's /internal routes).
 import type { Effort } from './api.ts'
+import type { PlanWindow } from './errors.ts'
 
 export type EngineUsage = {
   input_tokens: number
@@ -40,6 +41,7 @@ export type AgentEvent =
       toolUseIds: string[]
       toolNames: string[]
     }
-  | { kind: 'turn-end'; agentId: string; reason: TurnEndReason }
+  // `limits`: the plan's usage windows as the session last read them, when it had any.
+  | { kind: 'turn-end'; agentId: string; reason: TurnEndReason; limits?: PlanWindow[] }
 
 export type EngineToolResult = { result: string | Array<Record<string, unknown>> } | { deny: string }

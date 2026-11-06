@@ -27,4 +27,20 @@ describe('errors', () => {
   test('an interrupted subagent maps to 500 api_error', () => {
     expect(upstreamError('aborted').status).toBe(500)
   })
+
+  test('a failure with a plan window used up is a 429 that names the window and its reset', () => {
+    const err = upstreamError('error', [
+      { kind: 'five_hour', percentUsed: 12, resetsAt: '2026-11-07T01:30:00Z' },
+      { kind: 'seven_day', percentUsed: 100, resetsAt: '2026-11-13T20:00:00Z' },
+    ])
+    expect([err.status, err.type]).toEqual([429, 'rate_limit_error'])
+    expect(err.message).toContain('seven_day')
+    expect(err.message).toContain('2026-11-13T20:00:00Z')
+    expect(err.retryAfterSeconds).toBeGreaterThan(0)
+  })
+
+  test('a failure with every window below its limit stays a 529', () => {
+    const err = upstreamError('error', [{ kind: 'seven_day', percentUsed: 40, resetsAt: '2026-11-13T20:00:00Z' }])
+    expect([err.status, err.type]).toEqual([529, 'overloaded_error'])
+  })
 })
