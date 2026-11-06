@@ -115,6 +115,30 @@ summarize(e => `${e.client ?? '(unlabelled)'} ${e.model}`)
 console.log('\nby day (UTC)')
 summarize(e => e.t.slice(0, 10))
 
+// Fresh requests whose history is exactly an earlier request's history plus its reply: turns that
+// carried on a conversation, but started a new subagent and re-sent the whole history to do it.
+const seen = new Set<string>()
+let fresh = 0
+let followUps = 0
+let rewritten = 0
+for (const e of entries) {
+  const k = e as Entry & { prefix?: string; next?: string }
+  if (k.prefix === undefined) continue
+  if (e.route === 'fresh' && !failed(e)) {
+    fresh++
+    if (seen.has(`${e.client}:${k.prefix}`)) {
+      followUps++
+      rewritten += e.usage?.cache_creation_input_tokens ?? 0
+    }
+  }
+  if (k.next !== undefined) seen.add(`${e.client}:${k.next}`)
+}
+if (fresh > 0) {
+  console.log(
+    `\nconversation follow-ups: ${n(followUps)} of ${n(fresh)} new turns carried on an earlier conversation (${pct(followUps, fresh)}), rewriting ${n(rewritten)} tokens of cache that resuming the same subagent would have read instead`,
+  )
+}
+
 const errors = new Map<string, number>()
 for (const e of entries.filter(failed)) {
   const key = e.error ? `${e.error.status} ${e.error.type}: ${e.error.message}` : '(failed before errors were logged)'

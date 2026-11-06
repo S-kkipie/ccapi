@@ -1,8 +1,9 @@
-import { timingSafeEqual } from 'node:crypto'
+import { createHash, timingSafeEqual } from 'node:crypto'
 import type { MessagesRequest } from '../src/api.ts'
 import type { AgentEvent, RegisteredReport, RequestJob, SpawnedReport, SpawnJob, ToolToRegister } from '../src/wire.ts'
 import { ATTACHMENTS_ADDENDUM, buildAgentPlan, effortOf, toolChoiceAddendum } from '../src/agent-spec.ts'
 import { ApiError, errorBody, toApiError } from '../src/errors.ts'
+import { canonicalConversation } from '../src/conversation-key.ts'
 import { fnv1a } from '../src/hash.ts'
 import { familyAlias, MODELS, resolveModel } from '../src/models.ts'
 import { renderConversation, systemText } from '../src/render.ts'
@@ -112,6 +113,17 @@ export const createBridge = (cfg: BridgeConfig) => {
         const message = sink.message()
         const error = sink.error
         const limits = sink.limits
+        // Fingerprints for measuring how often a request carries on the conversation of an earlier one:
+        // `prefix` is this history without its last message, `next` this history plus the reply.
+        const digest = (text: string) => createHash('sha256').update(text).digest('hex').slice(0, 16)
+        const keys = error
+          ? {}
+          : {
+              prefix: digest(canonicalConversation(req.system, req.tools, req.messages.slice(0, -1))),
+              next: digest(
+                canonicalConversation(req.system, req.tools, [...req.messages, { role: 'assistant', content: message.content }]),
+              ),
+            }
         cfg.log({
           client,
           convId,
@@ -121,6 +133,7 @@ export const createBridge = (cfg: BridgeConfig) => {
           ms: Date.now() - startedAt,
           stopReason: message.stop_reason,
           usage: message.usage,
+          ...keys,
           ...(error ? { error: { status: error.status, type: error.type, message: error.message } } : {}),
           ...(limits ? { limits } : {}),
           ...(cfg.debugBodies ? { request: req } : {}),

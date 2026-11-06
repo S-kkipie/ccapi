@@ -232,6 +232,29 @@ describe('bridge', () => {
     expect(entries.at(-1)).toMatchObject({ error: { type: 'rate_limit_error' }, limits })
   })
 
+  test('a follow-up turn logs a prefix equal to the previous turn\'s next', async () => {
+    const entries: Record<string, unknown>[] = []
+    const { client, internal, admit } = setup({ log: e => entries.push(e) })
+    const answer = async (agentId: string, text: string) => {
+      await admit(agentId)
+      await internal('events', [
+        { kind: 'text', agentId, index: 0, text },
+        { kind: 'step-end', agentId, stopReason: 'end_turn', usage, toolUseIds: [], toolNames: [] },
+        { kind: 'turn-end', agentId, reason: 'answer' },
+      ])
+    }
+    const first = client(ask)
+    await answer('ag30', 'Hello')
+    await first
+    const second = client({ ...ask, messages: [...ask.messages, { role: 'assistant', content: 'Hello' }, { role: 'user', content: 'again' }] })
+    await answer('ag31', 'Hi again')
+    await second
+    const [a, b] = entries.slice(-2)
+    expect(typeof a?.next).toBe('string')
+    expect(b?.prefix).toBe(a?.next)
+    expect(b?.next).not.toBe(a?.next)
+  })
+
   test('the concurrency limit answers 429 with retry-after', async () => {
     const { client } = setup({ maxConcurrent: 1, queueSize: 0 })
     void client(ask)
